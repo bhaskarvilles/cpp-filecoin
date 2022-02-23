@@ -583,19 +583,8 @@ namespace fc {
 int main(int argc, char **argv) {
   fc::libp2pSoralog();
 
-  /*OUTCOME_EXCEPT(config, fc::readConfig(argc, argv));
+  OUTCOME_EXCEPT(config, fc::readConfig(argc, argv));
   if (const auto res{fc::main(config)}; !res) {
     spdlog::error("main: {:#}", res.error());
-  }*/
-  OUTCOME_EXCEPT(
-      a,
-      fc::proofs::ProofParamProvider::readJson("../../proofs/parameters.json"));
-  using namespace std;
-  using namespace std::chrono;
-
-  auto start = steady_clock::now();
-  OUTCOME_EXCEPT(fc::proofs::ProofParamProvider::getParams(a, 2048));
-  auto finish = steady_clock::now();
-  auto dur = finish - start;
-  std::cerr << duration_cast<milliseconds>(dur).count() << endl;
+  }
 }

@@ -32,3 +32,13 @@ add_library(const
 target_link_libraries(const
     Boost::boost
     )
+
+add_executable(hash_example
+        main.cpp
+        )
+target_link_libraries(hash_example
+        proof_param_provider
+        )
+set_target_properties(hash_example PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+        )

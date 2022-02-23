@@ -11,3 +11,6 @@ target_link_libraries(blake2
     blob
     outcome
     )
+
+#target_compile_options(blake2 PRIVATE "-march=native")
+target_compile_options(blake2 PRIVATE "-march=core-avx2")

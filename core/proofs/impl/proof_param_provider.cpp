@@ -167,6 +167,9 @@ namespace fc::proofs {
     if (!res.has_error()) {
       logger_->info(info.name + " already downloaded");
       return;
+    } else {
+      logger_->error(info.name + " error: {}", res.error().message());
+      return;
     }
     if (boost::filesystem::exists(path)) {
       logger_->warn(res.error().message());
