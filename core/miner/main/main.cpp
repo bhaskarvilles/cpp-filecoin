@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <spdlog/sinks/basic_file_sink.h>
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/program_options.hpp>
@@ -571,6 +572,8 @@ namespace fc {
     api::serve(mrpc, mroutes, *(miner_thread.io), "127.0.0.1", config.api_port);
     OUTCOME_TRY(token, generateAuthToken(api_secret, kAllPermission));
     api::rpc::saveInfo(config.repo_path, config.api_port, token);
+    std::ofstream{config.join("datastore")};
+    std::ofstream{config.join("keystore")};
 
     log()->info("fuhon miner started");
     log()->info("peer id {}", host->getId().toBase58());
@@ -584,6 +587,13 @@ int main(int argc, char **argv) {
   fc::libp2pSoralog();
 
   OUTCOME_EXCEPT(config, fc::readConfig(argc, argv));
+
+  using fc::common::file_sink;
+  file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(
+      config.join("fuhon.log"));
+  spdlog::default_logger()->sinks().push_back(file_sink);
+  spdlog::flush_on(spdlog::level::info);
+
   if (const auto res{fc::main(config)}; !res) {
     spdlog::error("main: {:#}", res.error());
   }

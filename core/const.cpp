@@ -250,10 +250,13 @@ namespace fc {
     kUpgradeTurboHeight = -1;
     kUpgradeHyperdriveHeight = -1;
     kUpgradeChocolateHeight = -1;
-    kUpgradeOhSnapHeight = 240;
+    kUpgradeOhSnapHeight = INT64_MAX;
 
-    storage_power::kConsensusMinerMinPower = StoragePower{2} << 30;
+    storage_power::kConsensusMinerMinPower = StoragePower{2} << 10;
+    verified_registry::kMinVerifiedDealSize = 256;
     miner::kSupportedProofs = {
+        RegisteredSealProof::kStackedDrg2KiBV1,
+        RegisteredSealProof::kStackedDrg8MiBV1,
         RegisteredSealProof::kStackedDrg512MiBV1,
         RegisteredSealProof::kStackedDrg32GiBV1,
         RegisteredSealProof::kStackedDrg64GiBV1,
