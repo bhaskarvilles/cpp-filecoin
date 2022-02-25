@@ -79,6 +79,15 @@ namespace fc {
       DealInfoManagerImpl;
   namespace uuids = boost::uuids;
 
+  template <typename T>
+  auto O(outcome::result<T> &&o) {
+    return std::move(o).value();
+  }
+  template <typename T>
+  auto O(Outcome<T> &&o) {
+    return O(std::move(o.o));
+  }
+
   static const Bytes kActor{copy(cbytes("actor"))};
   static const std::string kSectorCounterKey = "sector_counter";
   constexpr size_t kApiThreadPoolSize = 4;
@@ -108,23 +117,23 @@ namespace fc {
     }
   };
 
-  outcome::result<void> migratePreSealMeta(
+  void migratePreSealMeta(
       const std::string &path,
       const Address &maddr,
       const std::shared_ptr<storage::PersistentBufferMap> &ds) {
-    OUTCOME_TRY(file, common::readFile(path));
-    OUTCOME_TRY(j_file, codec::json::parse(gsl::make_span(file)));
-    OUTCOME_TRY(
-        psm, api::decode<std::map<std::string, miner::types::Miner>>(j_file));
+    auto file = O(common::readFile(path));
+    auto j_file = O(codec::json::parse(gsl::make_span(file)));
+    auto psm =
+        O(api::decode<std::map<std::string, miner::types::Miner>>(j_file));
 
     const auto it_psm = psm.find(encodeToString(maddr));
     if (it_psm == psm.end()) {
-      return ERROR_TEXT("Miner not found");
+      throw std::runtime_error{"Miner not found"};
     }
     const auto &meta{it_psm->second};
 
     StoredCounter sc(ds, kSectorCounterKey);
-    OUTCOME_TRY(max_sector, sc.getNumber());
+    auto max_sector = O(sc.getNumber());
     for (const auto &elem : meta.sectors) {
       // TODO(ortyomka): migrate sealing info
 
@@ -132,12 +141,10 @@ namespace fc {
         max_sector = elem.sector_id + 1;
       }
     }
-    OUTCOME_TRY(sc.setNumber(max_sector));
-
-    return outcome::success();
+    O(sc.setNumber(max_sector));
   }
 
-  outcome::result<Config> readConfig(int argc, char **argv) {
+  Config readConfig(int argc, char **argv) {
     namespace po = boost::program_options;
     Config config;
     struct {
@@ -186,8 +193,7 @@ namespace fc {
       po::notify(vm);
     }
 
-    OUTCOME_TRYA(config.node_api,
-                 api::rpc::loadInfo(raw.node_repo, "FULLNODE_API_INFO"));
+    config.node_api = O(api::rpc::loadInfo(raw.node_repo, "FULLNODE_API_INFO"));
     if (!raw.sector_size.empty()) {
       boost::algorithm::to_lower(raw.sector_size);
       if (raw.sector_size == "2kib") {
@@ -210,22 +216,19 @@ namespace fc {
   }
 
   // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-  outcome::result<void> setupMiner(Config &config,
-                                   BufferMap &kv,
-                                   const PeerId &peer_id) {
+  void setupMiner(Config &config, BufferMap &kv, const PeerId &peer_id) {
     IoThread io_thread;
     io_context io;
     api::FullNodeApi api;
     api::rpc::Client wsc{*io_thread.io};
     wsc.setup(api);
-    OUTCOME_TRY(
-        wsc.connect(config.node_api.first, "/rpc/v0", config.node_api.second));
+    O(wsc.connect(config.node_api.first, "/rpc/v0", config.node_api.second));
 
     const auto &_peer_id{peer_id.toVector()};
     if (!kv.contains(kActor)) {
       if (!config.actor) {
         spdlog::info("creating miner actor");
-        OUTCOME_TRY(version, api.StateNetworkVersion({}));
+        auto version = O(api.StateNetworkVersion({}));
         assert(config.seal_type);
         if (version >= api::NetworkVersion::kVersion7) {
           switch (*config.seal_type) {
@@ -253,63 +256,56 @@ namespace fc {
           config.worker = config.owner;
         }
         using vm::actor::builtin::v0::storage_power::CreateMiner;
-        OUTCOME_TRY(params,
-                    codec::cbor::encode(CreateMiner::Params{
-                        *config.owner,
-                        *config.worker,
-                        *config.seal_type,
-                        _peer_id,
-                        {},
-                    }));
-        OUTCOME_TRY(smsg,
-                    api.MpoolPushMessage({vm::actor::kStoragePowerAddress,
-                                          *config.owner,
-                                          {},
-                                          {},
-                                          {},
-                                          {},
-                                          CreateMiner::Number,
-                                          params},
-                                         api::kPushNoSpec));
+        auto params = O(codec::cbor::encode(CreateMiner::Params{
+            *config.owner,
+            *config.worker,
+            *config.seal_type,
+            _peer_id,
+            {},
+        }));
+        auto smsg = O(api.MpoolPushMessage({vm::actor::kStoragePowerAddress,
+                                            *config.owner,
+                                            {},
+                                            {},
+                                            {},
+                                            {},
+                                            CreateMiner::Number,
+                                            params},
+                                           api::kPushNoSpec));
         spdlog::info(
             "msg {}: CreateMiner owner={}", smsg.getCid(), *config.owner);
-        OUTCOME_TRY(result,
-                    api.StateWaitMsg(smsg.getCid(),
-                                     kMessageConfidence,
-                                     api::kLookbackNoLimit,
-                                     true));
+        auto result = O(api.StateWaitMsg(
+            smsg.getCid(), kMessageConfidence, api::kLookbackNoLimit, true));
         if (result.receipt.exit_code != vm::VMExitCode::kOk) {
           spdlog::error("failed to create miner actor: {}",
                         result.receipt.exit_code);
           exit(EXIT_FAILURE);
         }
-        OUTCOME_TRY(created,
-                    codec::cbor::decode<CreateMiner::Result>(
-                        result.receipt.return_value));
+        auto created = O(codec::cbor::decode<CreateMiner::Result>(
+            result.receipt.return_value));
         config.actor = created.id_address;
         spdlog::info("created miner actor {}", *config.actor);
       }
-      OUTCOME_TRY(kv.put(kActor, primitives::address::encode(*config.actor)));
+      O(kv.put(kActor, primitives::address::encode(*config.actor)));
     } else {
-      OUTCOME_TRY(_actor, kv.get(kActor));
-      OUTCOME_TRYA(config.actor, primitives::address::decode(_actor));
+      auto _actor = O(kv.get(kActor));
+      config.actor = O(primitives::address::decode(_actor));
     }
-    OUTCOME_TRY(minfo, api.StateMinerInfo(*config.actor, {}));
+    auto minfo = O(api.StateMinerInfo(*config.actor, {}));
     config.owner = minfo.owner;
     config.worker = minfo.worker;
     if (minfo.peer_id.empty() || minfo.peer_id != _peer_id) {
       using vm::actor::builtin::v0::miner::ChangePeerId;
-      OUTCOME_TRY(params, codec::cbor::encode(ChangePeerId::Params{_peer_id}));
-      OUTCOME_TRY(smsg,
-                  api.MpoolPushMessage({*config.actor,
-                                        minfo.worker,
-                                        {},
-                                        {},
-                                        {},
-                                        {},
-                                        ChangePeerId::Number,
-                                        params},
-                                       api::kPushNoSpec));
+      auto params = O(codec::cbor::encode(ChangePeerId::Params{_peer_id}));
+      auto smsg = O(api.MpoolPushMessage({*config.actor,
+                                          minfo.worker,
+                                          {},
+                                          {},
+                                          {},
+                                          {},
+                                          ChangePeerId::Number,
+                                          params},
+                                         api::kPushNoSpec));
       spdlog::info(
           "msg {}: ChangePeerId peer={}", smsg.getCid(), peer_id.toBase58());
 
@@ -332,22 +328,18 @@ namespace fc {
           true);
     }
 
-    OUTCOME_TRY(
-        params,
+    auto params = O(
         proofs::ProofParamProvider::readJson(config.join("proof-params.json")));
-    OUTCOME_TRY(
-        proofs::ProofParamProvider::getParams(params, minfo.sector_size));
-
-    return outcome::success();
+    O(proofs::ProofParamProvider::getParams(params, minfo.sector_size));
   }
 
   // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-  outcome::result<void> main(Config &config) {
+  void main(Config &config) {
     log()->debug("Starting ", miner::kMinerVersion);
 
     auto clock{std::make_shared<clock::UTCClockImpl>()};
 
-    OUTCOME_TRY(leveldb, storage::LevelDB::create(config.join("leveldb")));
+    auto leveldb = O(storage::LevelDB::create(config.join("leveldb")));
     auto prefixed{[&](auto s) {
       return std::make_shared<storage::MapPrefix>(s, leveldb);
     }};
@@ -355,7 +347,7 @@ namespace fc {
       return std::make_shared<storage::OneKey>(s, m);
     }};
 
-    OUTCOME_TRY(peer_key, loadPeerKey(config.join("peer_ed25519.key")));
+    auto peer_key = O(loadPeerKey(config.join("peer_ed25519.key")));
 
     auto injector{libp2p::injector::makeHostInjector(
         libp2p::injector::useKeyPair(peer_key))};
@@ -365,12 +357,12 @@ namespace fc {
 
     IoThread sealing_thread;
 
-    OUTCOME_TRY(setupMiner(config, *leveldb, host->getId()));
+    setupMiner(config, *leveldb, host->getId());
     if (config.preseal_meta_path) {
       log()->info("Importing pre-sealed sector metadata");
-      OUTCOME_TRY(migratePreSealMeta(config.preseal_meta_path.value().string(),
-                                     *config.actor,
-                                     prefixed("/metadata")));
+      migratePreSealMeta(config.preseal_meta_path.value().string(),
+                         *config.actor,
+                         prefixed("/metadata"));
     }
 
     auto napi{std::make_shared<api::FullNodeApi>()};
@@ -381,16 +373,15 @@ namespace fc {
     }
     api::rpc::Client wsc{*io_thread.io};
     wsc.setup(*napi);
-    OUTCOME_TRY(
-        wsc.connect(config.node_api.first, "/rpc/v0", config.node_api.second));
+    O(wsc.connect(config.node_api.first, "/rpc/v0", config.node_api.second));
 
     host->start();
-    OUTCOME_TRY(node_peer, napi->NetAddrsListen());
+    auto node_peer = O(napi->NetAddrsListen());
     host->connect(node_peer);
 
     auto storage{std::make_shared<sector_storage::stores::LocalStorageImpl>(
         config.repo_path.string())};
-    OUTCOME_TRY(storage->setStorage([&](auto &storage_config) {
+    O(storage->setStorage([&](auto &storage_config) {
       if (storage_config.storage_paths.empty()) {
         boost::filesystem::path path{config.join("sectors")};
         OUTCOME_EXCEPT(common::writeFile(
@@ -412,16 +403,15 @@ namespace fc {
     auto sector_index{
         std::make_shared<sector_storage::stores::SectorIndexImpl>()};
 
-    OUTCOME_TRY(local_store,
-                sector_storage::stores::LocalStoreImpl::newLocalStore(
-                    storage,
-                    sector_index,
-                    std::vector<std::string>{"http://127.0.0.1"},
-                    scheduler));
+    auto local_store = O(sector_storage::stores::LocalStoreImpl::newLocalStore(
+        storage,
+        sector_index,
+        std::vector<std::string>{"http://127.0.0.1"},
+        scheduler));
 
-    OUTCOME_TRY(api_secret, loadApiSecret(config.join("jwt_secret")));
-    OUTCOME_TRY(admin_token,
-                generateAuthToken(api_secret, {api::kAdminPermission}));
+    auto api_secret = O(loadApiSecret(config.join("jwt_secret")));
+    auto admin_token =
+        O(generateAuthToken(api_secret, {api::kAdminPermission}));
 
     std::unordered_map<std::string, std::string> auth_headers;
     auth_headers["Authorization"] = "Bearer " + admin_token;
@@ -429,9 +419,8 @@ namespace fc {
         local_store, std::move(auth_headers))};
 
     IoThread io_thread2;
-    OUTCOME_TRY(wscheduler,
-                sector_storage::SchedulerImpl::newScheduler(
-                    io_thread2.io, prefixed("scheduler_works/")));
+    auto wscheduler = O(sector_storage::SchedulerImpl::newScheduler(
+        io_thread2.io, prefixed("scheduler_works/")));
     IoThread io_thread3;
 
     {
@@ -445,10 +434,8 @@ namespace fc {
       }
     }
 
-    OUTCOME_TRY(
-        manager,
-        sector_storage::ManagerImpl::newManager(
-            io_thread3.io, remote_store, wscheduler, {true, true, true, true}));
+    auto manager = O(sector_storage::ManagerImpl::newManager(
+        io_thread3.io, remote_store, wscheduler, {true, true, true, true}));
 
     // TODO(ortyomka): make param
     mining::Config default_config{.max_wait_deals_sectors = 2,
@@ -456,23 +443,21 @@ namespace fc {
                                   .max_sealing_sectors_for_deals = 0,
                                   .wait_deals_delay = std::chrono::hours(6),
                                   .batch_pre_commits = true};
-    OUTCOME_TRY(miner,
-                miner::MinerImpl::newMiner(
-                    napi,
-                    *config.actor,
-                    *config.worker,
-                    std::make_shared<primitives::StoredCounter>(
-                        prefixed("/metadata"), kSectorCounterKey),
-                    prefixed("sealing_fsm/"),
-                    manager,
-                    scheduler,
-                    sealing_thread.io,
-                    default_config,
-                    config.precommit_control));
+    auto miner = O(miner::MinerImpl::newMiner(
+        napi,
+        *config.actor,
+        *config.worker,
+        std::make_shared<primitives::StoredCounter>(prefixed("/metadata"),
+                                                    kSectorCounterKey),
+        prefixed("sealing_fsm/"),
+        manager,
+        scheduler,
+        sealing_thread.io,
+        default_config,
+        config.precommit_control));
     auto sealing{miner->getSealing()};
 
-    OUTCOME_TRY(
-        mining,
+    auto mining = O(
         mining::Mining::create(scheduler, clock, napi, manager, *config.actor));
     mining->start();
 
@@ -498,7 +483,7 @@ namespace fc {
         miner, prefixed("sealedblocks/"))};
     auto chain_events{std::make_shared<ChainEventsImpl>(
         napi, ChainEventsImpl::IsDealPrecommited{})};
-    OUTCOME_TRY(chain_events->init());
+    O(chain_events->init());
     auto piece_io{std::make_shared<markets::pieceio::PieceIOImpl>(
         config.join("piece_io"))};
     auto filestore{std::make_shared<storage::filestore::FileSystemFileStore>()};
@@ -517,7 +502,7 @@ namespace fc {
             piece_io,
             filestore,
             std::make_shared<DealInfoManagerImpl>(napi))};
-    OUTCOME_TRY(storage_provider->init());
+    O(storage_provider->init());
     auto retrieval_provider{
         std::make_shared<markets::retrieval::provider::RetrievalProviderImpl>(
             host,
@@ -570,7 +555,7 @@ namespace fc {
                          std::bind(mapi->AuthVerify, std::placeholders::_1))});
     IoThread miner_thread;
     api::serve(mrpc, mroutes, *(miner_thread.io), "127.0.0.1", config.api_port);
-    OUTCOME_TRY(token, generateAuthToken(api_secret, kAllPermission));
+    auto token = O(generateAuthToken(api_secret, kAllPermission));
     api::rpc::saveInfo(config.repo_path, config.api_port, token);
     std::ofstream{config.join("datastore")};
     std::ofstream{config.join("keystore")};
@@ -579,14 +564,13 @@ namespace fc {
     log()->info("peer id {}", host->getId().toBase58());
 
     io->run();
-    return outcome::success();
   }
 }  // namespace fc
 
 int main(int argc, char **argv) {
   fc::libp2pSoralog();
 
-  OUTCOME_EXCEPT(config, fc::readConfig(argc, argv));
+  auto config = fc::readConfig(argc, argv);
 
   using fc::common::file_sink;
   file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(
@@ -594,7 +578,5 @@ int main(int argc, char **argv) {
   spdlog::default_logger()->sinks().push_back(file_sink);
   spdlog::flush_on(spdlog::level::info);
 
-  if (const auto res{fc::main(config)}; !res) {
-    spdlog::error("main: {:#}", res.error());
-  }
+  fc::main(config);
 }

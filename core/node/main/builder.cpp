@@ -542,6 +542,17 @@ namespace fc::node {
     auto secp_provider =
         std::make_shared<crypto::secp256k1::Secp256k1ProviderImpl>();
 
+    if (getenv("R3")) {
+      // REVERT(3)
+      auto ts{o.ts_load->load(o.ts_main->chain.rbegin()->second.key).value()};
+      for (auto i{0}; i < 3; ++i) {
+        spdlog::info("revert {}", ts->height());
+        o.env_context.interpreter_cache->remove(ts->key);
+        o.ts_main->chain.erase(ts->height());
+        ts = o.ts_load->load(ts->getParents()).value();
+      }
+    }
+
     auto head{
         o.ts_load->lazyLoad(std::prev(o.ts_main->chain.end())->second).value()};
     if (!o.env_context.interpreter_cache->tryGet(head->key)) {

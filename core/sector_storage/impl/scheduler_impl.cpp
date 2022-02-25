@@ -52,7 +52,7 @@ namespace fc::sector_storage {
       const boost::optional<WorkId> &maybe_work_id) {
     WorkerAction job = work;
     ReturnCb callback = cb;
-    if (maybe_work_id.has_value()) {
+    if (false) {
       const auto &work_id{maybe_work_id.value()};
 
       callback =
@@ -69,6 +69,7 @@ namespace fc::sector_storage {
 
       if (call_kv_->contains(static_cast<Bytes>(work_id))) {
         // already in progress
+        logger_->warn("schedule: ALREADY IN PROGRESS: {}", task_type);
 
         OUTCOME_TRY(raw_state, call_kv_->get(static_cast<Bytes>(work_id)));
         OUTCOME_TRY(state, codec::cbor::decode<WorkState>(raw_state));
