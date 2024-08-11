@@ -15,8 +15,8 @@
 #include "testutil/outcome.hpp"
 #include "testutil/vm/actor/builtin/actor_test_util.hpp"
 #include "vm/actor/actor.hpp"
+#include "vm/actor/builtin/methods/market.hpp"
 #include "vm/actor/builtin/types/miner/sector_info.hpp"
-#include "vm/actor/builtin/v5/market/market_actor.hpp"
 #include "vm/actor/codes.hpp"
 #include "vm/exit_code/exit_code.hpp"
 
@@ -44,11 +44,13 @@ namespace fc::mining::checks {
   using vm::actor::Actor;
   using vm::actor::builtin::makeMinerActorState;
   using vm::actor::builtin::states::MinerActorStatePtr;
+  using vm::actor::builtin::types::Universal;
+  using vm::actor::builtin::types::market::DealProposal;
   using vm::actor::builtin::types::miner::kPreCommitChallengeDelay;
-  using vm::actor::builtin::v5::market::ComputeDataCommitment;
   using vm::runtime::MockRuntime;
+  namespace market = vm::actor::builtin::market;
 
-  auto commD(ComputeDataCommitment::Result result) {
+  auto commD(market::ComputeDataCommitment::Result result) {
     InvocResult invoc;
     invoc.receipt.exit_code = VMExitCode::kOk;
     invoc.receipt.return_value = codec::cbor::encode(result).value();
@@ -157,7 +159,8 @@ namespace fc::mining::checks {
             const TipsetKey &key) -> outcome::result<api::StorageDeal> {
       if (did == deal_id and key == head_key) {
         api::StorageDeal res;
-        res.proposal.provider = Address::makeFromId(id + 1);
+        res.proposal = Universal<DealProposal>(ActorVersion::kVersion0);
+        res.proposal->provider = Address::makeFromId(id + 1);
         return res;
       }
 
@@ -208,8 +211,9 @@ namespace fc::mining::checks {
             const TipsetKey &key) -> outcome::result<api::StorageDeal> {
       if (did == deal_id and key == head_key) {
         api::StorageDeal res;
-        res.proposal.provider = Address::makeFromId(id);
-        res.proposal.piece_cid = "010001020002"_cid;
+        res.proposal = Universal<DealProposal>(ActorVersion::kVersion0);
+        res.proposal->provider = Address::makeFromId(id);
+        res.proposal->piece_cid = "010001020002"_cid;
         return res;
       }
 
@@ -261,9 +265,10 @@ namespace fc::mining::checks {
             const TipsetKey &key) -> outcome::result<api::StorageDeal> {
       if (did == deal_id and key == head_key) {
         api::StorageDeal res;
-        res.proposal.provider = Address::makeFromId(id);
-        res.proposal.piece_cid = piece.cid;
-        res.proposal.piece_size = piece.size + 1;
+        res.proposal = Universal<DealProposal>(ActorVersion::kVersion0);
+        res.proposal->provider = Address::makeFromId(id);
+        res.proposal->piece_cid = piece.cid;
+        res.proposal->piece_size = piece.size + 1;
         return res;
       }
 
@@ -315,10 +320,11 @@ namespace fc::mining::checks {
             const TipsetKey &key) -> outcome::result<api::StorageDeal> {
       if (did == deal_id and key == head_key) {
         api::StorageDeal res;
-        res.proposal.provider = Address::makeFromId(id);
-        res.proposal.piece_cid = piece.cid;
-        res.proposal.piece_size = piece.size;
-        res.proposal.start_epoch = 0;
+        res.proposal = Universal<DealProposal>(ActorVersion::kVersion0);
+        res.proposal->provider = Address::makeFromId(id);
+        res.proposal->piece_cid = piece.cid;
+        res.proposal->piece_size = piece.size;
+        res.proposal->start_epoch = 0;
         return res;
       }
 
@@ -391,10 +397,11 @@ namespace fc::mining::checks {
 
     MOCK_API(api_, StateMarketStorageDeal);
     api::StorageDeal deal;
-    deal.proposal.provider = Address::makeFromId(miner_id_);
-    deal.proposal.piece_cid = piece.cid;
-    deal.proposal.piece_size = piece.size;
-    deal.proposal.start_epoch = 1;
+    deal.proposal = Universal<DealProposal>(ActorVersion::kVersion0);
+    deal.proposal->provider = Address::makeFromId(miner_id_);
+    deal.proposal->piece_cid = piece.cid;
+    deal.proposal->piece_size = piece.size;
+    deal.proposal->start_epoch = 1;
     EXPECT_CALL(mock_StateMarketStorageDeal, Call(deal_id, head_key))
         .WillOnce(testing::Return(outcome::success(deal)));
 
@@ -402,9 +409,9 @@ namespace fc::mining::checks {
                              CbCid::hash("02"_unhex),
                              CbCid::hash("03"_unhex)}};
     MOCK_API(api_, StateCall);
-    EXPECT_CALL(
-        mock_StateCall,
-        Call(methodMatcher(ComputeDataCommitment::Number), precommit_key))
+    EXPECT_CALL(mock_StateCall,
+                Call(methodMatcher(market::ComputeDataCommitment::Number),
+                     precommit_key))
         .WillOnce(testing::Return(commD({{"010001020002"_cid}})));
 
     EXPECT_OUTCOME_ERROR(
@@ -456,10 +463,11 @@ namespace fc::mining::checks {
             const TipsetKey &key) -> outcome::result<api::StorageDeal> {
       if (did == deal_id and key == head_key) {
         api::StorageDeal res;
-        res.proposal.provider = Address::makeFromId(id);
-        res.proposal.piece_cid = piece.cid;
-        res.proposal.piece_size = piece.size;
-        res.proposal.start_epoch = 1;
+        res.proposal = Universal<DealProposal>(ActorVersion::kVersion0);
+        res.proposal->provider = Address::makeFromId(id);
+        res.proposal->piece_cid = piece.cid;
+        res.proposal->piece_size = piece.size;
+        res.proposal->start_epoch = 1;
         return res;
       }
 
@@ -470,9 +478,9 @@ namespace fc::mining::checks {
                              CbCid::hash("02"_unhex),
                              CbCid::hash("03"_unhex)}};
     MOCK_API(api_, StateCall);
-    EXPECT_CALL(
-        mock_StateCall,
-        Call(methodMatcher(ComputeDataCommitment::Number), precommit_key))
+    EXPECT_CALL(mock_StateCall,
+                Call(methodMatcher(market::ComputeDataCommitment::Number),
+                     precommit_key))
         .WillOnce(testing::Return(commD({{*info->comm_d}})));
 
     MOCK_API(api_, StateNetworkVersion);
@@ -559,10 +567,11 @@ namespace fc::mining::checks {
             const TipsetKey &key) -> outcome::result<api::StorageDeal> {
       if (did == deal_id and key == head_key) {
         api::StorageDeal res;
-        res.proposal.provider = Address::makeFromId(id);
-        res.proposal.piece_cid = piece.cid;
-        res.proposal.piece_size = piece.size;
-        res.proposal.start_epoch = 1;
+        res.proposal = Universal<DealProposal>(ActorVersion::kVersion0);
+        res.proposal->provider = Address::makeFromId(id);
+        res.proposal->piece_cid = piece.cid;
+        res.proposal->piece_size = piece.size;
+        res.proposal->start_epoch = 1;
         return res;
       }
 
@@ -573,9 +582,9 @@ namespace fc::mining::checks {
                              CbCid::hash("02"_unhex),
                              CbCid::hash("03"_unhex)}};
     MOCK_API(api_, StateCall);
-    EXPECT_CALL(
-        mock_StateCall,
-        Call(methodMatcher(ComputeDataCommitment::Number), precommit_key))
+    EXPECT_CALL(mock_StateCall,
+                Call(methodMatcher(market::ComputeDataCommitment::Number),
+                     precommit_key))
         .WillOnce(testing::Return(commD({{*info->comm_d}})));
 
     MOCK_API(api_, StateNetworkVersion);
@@ -664,10 +673,11 @@ namespace fc::mining::checks {
             const TipsetKey &key) -> outcome::result<api::StorageDeal> {
       if (did == deal_id and key == head_key) {
         api::StorageDeal res;
-        res.proposal.provider = Address::makeFromId(id);
-        res.proposal.piece_cid = piece.cid;
-        res.proposal.piece_size = piece.size;
-        res.proposal.start_epoch = 1;
+        res.proposal = Universal<DealProposal>(ActorVersion::kVersion0);
+        res.proposal->provider = Address::makeFromId(id);
+        res.proposal->piece_cid = piece.cid;
+        res.proposal->piece_size = piece.size;
+        res.proposal->start_epoch = 1;
         return res;
       }
 
@@ -678,9 +688,9 @@ namespace fc::mining::checks {
                              CbCid::hash("02"_unhex),
                              CbCid::hash("03"_unhex)}};
     MOCK_API(api_, StateCall);
-    EXPECT_CALL(
-        mock_StateCall,
-        Call(methodMatcher(ComputeDataCommitment::Number), precommit_key))
+    EXPECT_CALL(mock_StateCall,
+                Call(methodMatcher(market::ComputeDataCommitment::Number),
+                     precommit_key))
         .WillOnce(testing::Return(commD({{*info->comm_d}})));
 
     MOCK_API(api_, StateNetworkVersion);
@@ -1104,7 +1114,7 @@ namespace fc::mining::checks {
     EXPECT_OUTCOME_TRUE(cid_root,
                         actor_state_->precommitted_sectors.hamt.flush());
 
-    api_->ChainReadObj = [&](CID key) -> outcome::result<Bytes> {
+    api_->ChainReadObj = [&](const CID &key) -> outcome::result<Bytes> {
       if (key == actor_key) {
         return codec::cbor::encode(actor_state_);
       }
@@ -1161,8 +1171,8 @@ namespace fc::mining::checks {
   TEST_F(CheckUpdate, Success) {
     info->comm_r = CID{};
     info->update = true;
-    info->update_comm_d = CID{CbCid{}};
-    info->update_comm_r = CID{};
+    info->update_unsealed = CID{CbCid{}};
+    info->update_sealed = CID{};
     info->update_proof = Bytes{};
     auto &piece{info->pieces.emplace_back()};
     piece.deal_info.emplace();
@@ -1170,10 +1180,15 @@ namespace fc::mining::checks {
     auto &block{head->blks.emplace_back()};
     block.height = -1;
     EXPECT_CALL(mock_ChainHead, Call()).WillOnce(testing::Return(head));
-    EXPECT_CALL(mock_StateMarketStorageDeal, Call(_, _))
-        .WillOnce(testing::Return(outcome::success()));
+    api->StateMarketStorageDeal =
+        [&](api::DealId,
+            const TipsetKey &) -> outcome::result<api::StorageDeal> {
+      api::StorageDeal res;
+      res.proposal = Universal<DealProposal>(ActorVersion::kVersion0);
+      return res;
+    };
     EXPECT_CALL(mock_StateCall, Call(_, _))
-        .WillOnce(testing::Return(commD({{*info->update_comm_d}})));
+        .WillOnce(testing::Return(commD({{*info->update_unsealed}})));
     EXPECT_CALL(*proofs, verifyUpdateProof(_)).WillOnce(testing::Return(true));
     EXPECT_OUTCOME_TRUE_1(checkUpdate(miner, info, {}, api, proofs));
   }

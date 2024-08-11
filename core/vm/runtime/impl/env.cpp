@@ -9,7 +9,7 @@
 #include "codec/cbor/light_reader/cid.hpp"
 #include "common/prometheus/metrics.hpp"
 #include "common/prometheus/since.hpp"
-#include "vm/actor/builtin/v0/miner/miner_actor.hpp"
+#include "vm/actor/builtin/methods/miner.hpp"
 #include "vm/actor/cgo/actors.hpp"
 #include "vm/exit_code/exit_code.hpp"
 #include "vm/runtime/impl/runtime_impl.hpp"
@@ -27,6 +27,7 @@ namespace fc::vm::runtime {
   using actor::kSystemActorAddress;
   using toolchain::Toolchain;
   using version::getNetworkVersion;
+  namespace miner = actor::builtin::miner;
 
   auto &metricVmApplyCount() {
     static auto &x{prometheus::BuildCounter()
@@ -89,9 +90,10 @@ namespace fc::vm::runtime {
   }
 
   outcome::result<bool> IpldBuffered::contains(const CID &cid) const {
-    // must not be called
-    assert(false);
-    return false;
+    if (auto it{write.find(*asBlake(cid))}; it != write.end()) {
+      return true;
+    }
+    return ipld->contains(cid).value();
   }
 
   outcome::result<void> IpldBuffered::set(const CID &cid, BytesCow &&value) {
@@ -110,28 +112,33 @@ namespace fc::vm::runtime {
     return storage::ipfs::IpfsDatastoreError::kNotFound;
   }
 
-  Env::Env(const EnvironmentContext &env_context,
-           TsBranchPtr ts_branch,
-           TipsetCPtr tipset)
-      : ipld{std::make_shared<IpldBuffered>(env_context.ipld)},
-        state_tree{std::make_shared<StateTreeImpl>(
-            this->ipld, tipset->getParentStateRoot())},
-        env_context{env_context},
-        epoch{tipset->height()},
-        ts_branch{std::move(ts_branch)},
-        tipset{std::move(tipset)},
-        pricelist{epoch} {
-    setHeight(epoch);
-  }
-
-  void Env::setHeight(ChainEpoch height) {
-    epoch = height;
-    ipld->actor_version = actorVersion(height);
+  outcome::result<std::shared_ptr<Env>> Env::make(
+      const EnvironmentContext &env_context,
+      TsBranchPtr ts_branch,
+      const TokenAmount &base_fee,
+      const CID &state,
+      ChainEpoch epoch) {
+    auto env{std::make_shared<Env>()};
+    env->ipld = std::make_shared<IpldBuffered>(env_context.ipld);
+    env->state_tree = std::make_shared<StateTreeImpl>(env->ipld, state);
+    env->env_context = env_context;
+    env->epoch = epoch;
+    env->ts_branch = std::move(ts_branch);
+    env->base_state = state;
+    env->base_fee = base_fee;
+    env->pricelist = Pricelist{env->epoch};
+    env->ipld->actor_version = actorVersion(epoch);
+    if (env_context.circulating) {
+      OUTCOME_TRYA(
+          env->base_circulating,
+          env_context.circulating->circulating(env->state_tree, epoch));
+    }
+    return env;
   }
 
   // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-  outcome::result<Env::Apply> Env::applyMessage(const UnsignedMessage &message,
-                                                size_t size) {
+  outcome::result<ApplyRet> Env::applyMessage(const UnsignedMessage &message,
+                                              size_t size) {
     auto BOOST_OUTCOME_TRY_UNIQUE_NAME{
         gsl::finally([] { metricVmApplyCount().Increment(); })};
 
@@ -150,14 +157,14 @@ namespace fc::vm::runtime {
       return RuntimeError::kUnknown;
     }
     auto execution = Execution::make(shared_from_this(), message);
-    Apply apply;
+    ApplyRet apply;
     auto msg_gas_cost{pricelist.onChainMessage(size)};
     if (msg_gas_cost > message.gas_limit) {
-      apply.penalty = msg_gas_cost * tipset->getParentBaseFee();
+      apply.penalty = msg_gas_cost * base_fee;
       apply.receipt.exit_code = VMExitCode::kSysErrOutOfGas;
       return apply;
     }
-    apply.penalty = message.gas_limit * tipset->getParentBaseFee();
+    apply.penalty = message.gas_limit * base_fee;
     OUTCOME_TRY(maybe_from, state_tree->tryGet(message.from));
     if (!maybe_from) {
       apply.receipt.exit_code = VMExitCode::kSysErrSenderInvalid;
@@ -216,15 +223,13 @@ namespace fc::vm::runtime {
     auto no_fee{false};
     if (network_version <= NetworkVersion::kVersion12
         && epoch > kUpgradeClausHeight && exit_code == VMExitCode::kOk
-        && message.method
-               == vm::actor::builtin::v0::miner::SubmitWindowedPoSt::Number) {
+        && message.method == miner::SubmitWindowedPoSt::Number) {
       OUTCOME_TRY(to, state_tree->tryGet(message.to));
       if (to) {
         no_fee = address_matcher->isStorageMinerActor(to->code);
       }
     }
     BOOST_ASSERT_MSG(used <= limit, "runtime charged gas over limit");
-    auto base_fee{tipset->getParentBaseFee()};
     auto fee_cap{message.gas_fee_cap};
     auto base_fee_pay{std::min(base_fee, fee_cap)};
     apply.penalty = base_fee > fee_cap ? TokenAmount{base_fee - fee_cap} * used
@@ -275,6 +280,12 @@ namespace fc::vm::runtime {
     dvm::onReceipt(receipt);
 
     return receipt;
+  }
+
+  outcome::result<CID> Env::flush() {
+    OUTCOME_TRY(root, state_tree->flush());
+    OUTCOME_TRY(ipld->flush(root));
+    return std::move(root);
   }
 
   outcome::result<void> Execution::chargeGas(GasAmount amount) {
@@ -386,15 +397,17 @@ namespace fc::vm::runtime {
       if (message.value < 0) {
         return VMExitCode::kSysErrForbidden;
       }
-      if (to_id != caller_id) {
+      if (to_id != caller_id || network_version >= NetworkVersion::kVersion15) {
         OUTCOME_TRY(from_actor, state_tree->get(caller_id));
         if (from_actor.balance < message.value) {
           return VMExitCode::kSysErrInsufficientFunds;
         }
-        from_actor.balance -= message.value;
-        to_actor.balance += message.value;
-        OUTCOME_TRY(state_tree->set(caller_id, from_actor));
-        OUTCOME_TRY(state_tree->set(to_id, to_actor));
+        if (to_id != caller_id) {
+          from_actor.balance -= message.value;
+          to_actor.balance += message.value;
+          OUTCOME_TRY(state_tree->set(caller_id, from_actor));
+          OUTCOME_TRY(state_tree->set(to_id, to_actor));
+        }
       }
     }
 

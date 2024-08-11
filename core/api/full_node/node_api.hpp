@@ -13,8 +13,10 @@
 #include "const.hpp"
 #include "data_transfer/types.hpp"
 #include "drand/messages.hpp"
+#include "markets/retrieval/client/retrieval_client.hpp"
 #include "markets/retrieval/types.hpp"
 #include "markets/storage/ask_protocol.hpp"
+#include "markets/storage/client/client_deal.hpp"
 #include "markets/storage/client/import_manager/import_manager.hpp"
 #include "markets/storage/mk_protocol.hpp"
 #include "primitives/block/block.hpp"
@@ -32,11 +34,13 @@ namespace fc::api {
   using crypto::randomness::DomainSeparationTag;
   using crypto::randomness::Randomness;
   using crypto::signature::Signature;
+  using data_transfer::ChannelId;
   using data_transfer::TransferId;
   using drand::BeaconEntry;
   using libp2p::multi::Multiaddress;
   using libp2p::peer::PeerId;
   using markets::retrieval::RetrievalPeer;
+  using markets::retrieval::client::RetrievalDeal;
   using markets::storage::DataRef;
   using markets::storage::SignedStorageAskV1_1_0;
   using markets::storage::StorageDeal;
@@ -44,6 +48,7 @@ namespace fc::api {
   using markets::storage::client::import_manager::Import;
   using primitives::BigInt;
   using primitives::ChainEpoch;
+  using primitives::DataCap;
   using primitives::DealId;
   using primitives::EpochDuration;
   using primitives::GasAmount;
@@ -92,13 +97,6 @@ namespace fc::api {
     bool is_car;
   };
 
-  /** Unique identifier for a channel */
-  struct ChannelId {
-    PeerId initiator{codec::cbor::kDefaultT<PeerId>()};
-    PeerId responder{codec::cbor::kDefaultT<PeerId>()};
-    TransferId id;
-  };
-
   struct DatatransferChannel {
     TransferId transfer_id;
     uint64_t status;
@@ -107,7 +105,7 @@ namespace fc::api {
     bool is_sender;
     std::string voucher;
     std::string message;
-    PeerId other_peer{codec::cbor::kDefaultT<PeerId>()};
+    PeerId other_peer{common::kDefaultT<PeerId>()};
     uint64_t transferred;
   };
 
@@ -386,6 +384,14 @@ namespace fc::api {
                jwt::kWritePermission,
                std::vector<StorageMarketDealInfo>)
 
+    API_METHOD(ClientGetDealInfo,
+               jwt::kReadPermission,
+               StorageMarketDealInfo,
+               const CID &)
+
+    API_METHOD(ClientListRetrievals,
+               jwt::kWritePermission,
+               std::vector<RetrievalDeal>)
     /**
      * Lists imported files and their root CIDs
      */
@@ -571,6 +577,10 @@ namespace fc::api {
                InvocResult,
                const UnsignedMessage &,
                const TipsetKey &)
+    API_METHOD(StateVerifiedRegistryRootKey,
+               jwt::kReadPermission,
+               Address,
+               const TipsetKey &)
     API_METHOD(StateDealProviderCollateralBounds,
                jwt::kReadPermission,
                DealCollateralBounds,
@@ -624,6 +634,12 @@ namespace fc::api {
                jwt::kReadPermission,
                MarketDealMap,
                const TipsetKey &)
+    API_METHOD(MarketAddBalance,
+               jwt::kSignPermission,
+               CID,
+               const Address &,
+               const Address &,
+               const TokenAmount &)
     API_METHOD(StateLookupID,
                jwt::kReadPermission,
                Address,
@@ -750,7 +766,7 @@ namespace fc::api {
      */
     API_METHOD(StateVerifiedClientStatus,
                jwt::kReadPermission,
-               boost::optional<StoragePower>,
+               boost::optional<DataCap>,
                const Address &,
                const TipsetKey &)
 
@@ -791,6 +807,8 @@ namespace fc::api {
     f(a.ChainGetBlockMessages);
     f(a.ChainGetGenesis);
     f(a.ChainGetMessage);
+    f(a.ClientListRetrievals);
+    f(a.ClientGetDealInfo);
     f(a.ChainGetNode);
     f(a.ChainGetPath);
     f(a.ChainGetParentMessages);
@@ -817,6 +835,7 @@ namespace fc::api {
     f(a.GasEstimateGasPremium);
     f(a.GasEstimateMessageGas);
     f(a.MarketReserveFunds);
+    f(a.MarketAddBalance);
     f(a.MinerCreateBlock);
     f(a.MinerGetBaseInfo);
     f(a.MpoolPending);
@@ -830,6 +849,7 @@ namespace fc::api {
     f(a.PaychVoucherCreate);
     f(a.StateAccountKey);
     f(a.StateCall);
+    f(a.StateVerifiedRegistryRootKey);
     f(a.StateDealProviderCollateralBounds);
     f(a.StateGetActor);
     f(a.StateGetRandomnessFromBeacon);

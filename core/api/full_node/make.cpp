@@ -28,17 +28,16 @@
 #include "proofs/impl/proof_engine_impl.hpp"
 #include "storage/car/car.hpp"
 #include "storage/unixfs/unixfs.hpp"
+#include "vm/actor/builtin/methods/market.hpp"
 #include "vm/actor/builtin/states/miner/miner_actor_state.hpp"
 #include "vm/actor/builtin/types/market/deal.hpp"
 #include "vm/actor/builtin/types/market/policy.hpp"
 #include "vm/actor/builtin/types/storage_power/policy.hpp"
-#include "vm/actor/builtin/v0/market/market_actor.hpp"
 #include "vm/actor/builtin/v5/market/validate.hpp"
 #include "vm/actor/builtin/v5/miner/monies.hpp"
 #include "vm/message/impl/message_signer_impl.hpp"
 #include "vm/message/message.hpp"
-#include "vm/runtime/env.hpp"
-#include "vm/runtime/impl/tipset_randomness.hpp"
+#include "vm/runtime/make_vm.hpp"
 #include "vm/state/impl/state_tree_impl.hpp"
 #include "vm/toolchain/toolchain.hpp"
 
@@ -71,10 +70,10 @@ namespace fc::api {
   using vm::actor::builtin::types::miner::kChainFinality;
   using vm::actor::builtin::types::storage_power::kConsensusMinerMinPower;
   using vm::interpreter::InterpreterCache;
-  using vm::runtime::Env;
   using vm::state::StateTreeImpl;
   using vm::toolchain::Toolchain;
   using vm::version::getNetworkVersion;
+  namespace market = vm::actor::builtin::market;
 
   void beaconEntriesForBlock(const DrandSchedule &schedule,
                              Beaconizer &beaconizer,
@@ -416,22 +415,16 @@ namespace fc::api {
       }
       // TODO(a.chernyshov): method should use fund manager batch reserve
       // and release funds requests for market actor.
-      OUTCOME_TRY(
-          encoded_params,
-          codec::cbor::encode(
-              vm::actor::builtin::v0::market::AddBalance::Params{address}));
-      UnsignedMessage unsigned_message{
-          kStorageMarketAddress,
-          wallet,
-          {},
-          amount,
-          0,
-          0,
-          // TODO (a.chernyshov) there is v0 actor method number, but the
-          // actor methods do not depend on version. Should be changed to
-          // general method number when methods number are made general
-          vm::actor::builtin::v0::market::AddBalance::Number,
-          encoded_params};
+      OUTCOME_TRY(encoded_params,
+                  codec::cbor::encode(market::AddBalance::Params{address}));
+      UnsignedMessage unsigned_message{kStorageMarketAddress,
+                                       wallet,
+                                       {},
+                                       amount,
+                                       0,
+                                       0,
+                                       market::AddBalance::Number,
+                                       encoded_params};
       OUTCOME_TRY(signed_message,
                   api->MpoolPushMessage(unsigned_message, api::kPushNoSpec));
       return signed_message.getCid();
@@ -588,7 +581,14 @@ namespace fc::api {
       if (!message.gas_limit) {
         message.gas_limit = kBlockGasLimit;
       }
-      auto env = std::make_shared<Env>(env_context, ts_branch, context.tipset);
+      const auto buf_ipld{std::make_shared<vm::IpldBuffered>(ipld)};
+      OUTCOME_TRY(env,
+                  vm::makeVm(buf_ipld,
+                             env_context,
+                             ts_branch,
+                             context.tipset->getParentBaseFee(),
+                             context.tipset->getParentStateRoot(),
+                             context.tipset->epoch()));
       InvocResult result;
       result.message = message;
       OUTCOME_TRYA(result.receipt, env->applyImplicitMessage(message));
@@ -746,6 +746,23 @@ namespace fc::api {
             return outcome::success();
           }));
       return map;
+    };
+    api->MarketAddBalance =
+        [=](auto &address, auto &wallet, auto &amount) -> outcome::result<CID> {
+      OUTCOME_TRY(encoded_params,
+                  codec::cbor::encode(market::AddBalance::Params{address}));
+      OUTCOME_TRY(signed_message,
+                  api->MpoolPushMessage(
+                      vm::message::UnsignedMessage(kStorageMarketAddress,
+                                                   wallet,
+                                                   0,
+                                                   amount,
+                                                   0,
+                                                   0,
+                                                   market::AddBalance::Number,
+                                                   encoded_params),
+                      api::kPushNoSpec));
+      return signed_message.getCid();
     };
     api->StateLookupID = [=](auto &address,
                              auto &tipset_key) -> outcome::result<Address> {
@@ -1061,7 +1078,7 @@ namespace fc::api {
 
     api->StateVerifiedClientStatus = [=](const Address &address,
                                          const TipsetKey &tipset_key)
-        -> outcome::result<boost::optional<StoragePower>> {
+        -> outcome::result<boost::optional<DataCap>> {
       OUTCOME_TRY(context, tipsetContext(tipset_key, true));
       OUTCOME_TRY(id, context.state_tree.lookupId(address));
       OUTCOME_TRY(state, context.verifiedRegistryState());
@@ -1115,7 +1132,10 @@ namespace fc::api {
     };
     api->Version = []() {
       return VersionResult{
-          kNodeVersion, makeApiVersion(2, 2, 0), kEpochDurationSeconds};
+          kNodeVersion,
+          makeApiVersion(2, 2, 0),
+          kBlockDelaySecs,
+      };
     };
     return api;
   }

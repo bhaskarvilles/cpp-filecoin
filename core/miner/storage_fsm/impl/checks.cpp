@@ -12,10 +12,9 @@
 #include "sector_storage/zerocomm/zerocomm.hpp"
 #include "storage/ipfs/api_ipfs_datastore/api_ipfs_datastore.hpp"
 #include "storage/ipfs/api_ipfs_datastore/api_ipfs_datastore_error.hpp"
+#include "vm/actor/builtin/methods/market.hpp"
 #include "vm/actor/builtin/states/miner/miner_actor_state.hpp"
 #include "vm/actor/builtin/types/miner/policy.hpp"
-#include "vm/actor/builtin/v0/market/market_actor.hpp"
-#include "vm/actor/builtin/v5/market/market_actor.hpp"
 #include "vm/toolchain/toolchain.hpp"
 
 namespace fc::mining::checks {
@@ -38,9 +37,9 @@ namespace fc::mining::checks {
   using vm::actor::builtin::types::miner::kPreCommitChallengeDelay;
   using vm::actor::builtin::types::miner::maxSealDuration;
   using vm::actor::builtin::types::miner::SectorPreCommitOnChainInfo;
-  using vm::actor::builtin::v5::market::ComputeDataCommitment;
   using vm::message::UnsignedMessage;
   using vm::toolchain::Toolchain;
+  namespace market = vm::actor::builtin::market;
 
   outcome::result<EpochDuration> getMaxProveCommitDuration(
       NetworkVersion network, const std::shared_ptr<SectorInfo> &sector_info) {
@@ -86,19 +85,19 @@ namespace fc::mining::checks {
       }
 
       const auto &proposal{maybe_proposal.value()};
-      if (miner_address != proposal.proposal.provider) {
+      if (miner_address != proposal.proposal->provider) {
         return ChecksError::kInvalidDeal;
       }
 
-      if (piece.piece.cid != proposal.proposal.piece_cid) {
+      if (piece.piece.cid != proposal.proposal->piece_cid) {
         return ChecksError::kInvalidDeal;
       }
 
-      if (piece.piece.size != proposal.proposal.piece_size) {
+      if (piece.piece.size != proposal.proposal->piece_size) {
         return ChecksError::kInvalidDeal;
       }
 
-      if (chain_head->epoch() >= proposal.proposal.start_epoch) {
+      if (chain_head->epoch() >= proposal.proposal->start_epoch) {
         return ChecksError::kExpiredDeal;
       }
       ++deal_count;
@@ -120,7 +119,7 @@ namespace fc::mining::checks {
     }
 
     OUTCOME_TRY(params,
-                codec::cbor::encode(ComputeDataCommitment::Params{
+                codec::cbor::encode(market::ComputeDataCommitment::Params{
                     .inputs =
                         {
                             {
@@ -136,7 +135,7 @@ namespace fc::mining::checks {
                             {},
                             {},
                             {},
-                            ComputeDataCommitment::Number,
+                            market::ComputeDataCommitment::Number,
                             params};
     OUTCOME_TRY(invocation_result, api->StateCall(message, tipset_key));
     if (invocation_result.receipt.exit_code != VMExitCode::kOk) {
@@ -144,7 +143,7 @@ namespace fc::mining::checks {
     }
 
     OUTCOME_TRY(res,
-                codec::cbor::decode<ComputeDataCommitment::Result>(
+                codec::cbor::decode<market::ComputeDataCommitment::Result>(
                     invocation_result.receipt.return_value));
 
     if (res.commds.size() != 1) {
@@ -299,16 +298,21 @@ namespace fc::mining::checks {
     if (deal_count == 0) {
       return ERROR_TEXT("checkUpdate: no deals");
     }
+
+    if (!sector_info->update_unsealed) {
+      return ChecksError::kBadUpdateReplica;
+    }
+
     OUTCOME_TRY(comm_d,
                 getDataCommitment(miner_address, sector_info, tipset_key, api));
-    if (sector_info->update_comm_d != comm_d) {
-      return ERROR_TEXT("checkUpdate: wrong update_comm_d");
+    if (sector_info->update_unsealed != comm_d) {
+      return ChecksError::kBadUpdateReplica;
     }
-    if (!sector_info->update_comm_r) {
-      return ERROR_TEXT("checkUpdate: no update_comm_r");
+    if (!sector_info->update_sealed) {
+      return ChecksError::kBadUpdateReplica;
     }
     if (!sector_info->update_proof) {
-      return ERROR_TEXT("checkUpdate: no update_proof");
+      return ChecksError::kBadUpdateProof;
     }
     OUTCOME_TRY(update_type,
                 getRegisteredUpdateProof(sector_info->sector_type));
@@ -316,12 +320,12 @@ namespace fc::mining::checks {
                 proofs->verifyUpdateProof({
                     update_type,
                     *sector_info->comm_r,
-                    *sector_info->update_comm_r,
-                    *sector_info->update_comm_d,
+                    *sector_info->update_sealed,
+                    *sector_info->update_unsealed,
                     *sector_info->update_proof,
                 }));
     if (!verified) {
-      return ERROR_TEXT("checkUpdate: wrong proof");
+      return ChecksError::kBadUpdateProof;
     }
     return outcome::success();
   }
@@ -358,6 +362,10 @@ OUTCOME_CPP_DEFINE_CATEGORY(fc::mining::checks, ChecksError, e) {
       return "ChecksError: need to wait commit";
     case E::kMinerVersion:
       return "ChecksError::kMinerVersion";
+    case E::kBadUpdateReplica:
+      return "ChecksError: bad update replica";
+    case E::kBadUpdateProof:
+      return "ChecksError: bad update proof";
     default:
       return "ChecksError: unknown error";
   }

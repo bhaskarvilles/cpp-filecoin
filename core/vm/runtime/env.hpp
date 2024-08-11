@@ -12,6 +12,7 @@
 #include "vm/runtime/env_context.hpp"
 #include "vm/runtime/pricelist.hpp"
 #include "vm/runtime/runtime_randomness.hpp"
+#include "vm/runtime/virtual_machine.hpp"
 #include "vm/state/impl/state_tree_impl.hpp"
 
 namespace fc::vm::runtime {
@@ -36,32 +37,30 @@ namespace fc::vm::runtime {
   };
 
   /// Environment contains objects that are shared by runtime contexts
-  struct Env : std::enable_shared_from_this<Env> {
-    Env(const EnvironmentContext &env_context,
+  struct Env : VirtualMachine, std::enable_shared_from_this<Env> {
+    static outcome::result<std::shared_ptr<Env>> make(
+        const EnvironmentContext &env_context,
         TsBranchPtr ts_branch,
-        TipsetCPtr tipset);
+        const TokenAmount &base_fee,
+        const CID &state,
+        ChainEpoch epoch);
 
-    struct Apply {
-      MessageReceipt receipt;
-      TokenAmount penalty;
-      TokenAmount reward;
-    };
-
-    void setHeight(ChainEpoch height);
-
-    outcome::result<Apply> applyMessage(const UnsignedMessage &message,
-                                        size_t size);
+    outcome::result<ApplyRet> applyMessage(const UnsignedMessage &message,
+                                           size_t size) override;
 
     outcome::result<MessageReceipt> applyImplicitMessage(
-        const UnsignedMessage &message);
+        const UnsignedMessage &message) override;
+    outcome::result<CID> flush() override;
 
     std::shared_ptr<IpldBuffered> ipld;
     std::shared_ptr<StateTreeImpl> state_tree;
     EnvironmentContext env_context;
     ChainEpoch epoch;  // mutable epoch for cron()
     TsBranchPtr ts_branch;
-    TipsetCPtr tipset;
-    Pricelist pricelist;
+    CID base_state;
+    TokenAmount base_fee;
+    Pricelist pricelist{0};
+    TokenAmount base_circulating;
   };
 
   struct Execution : std::enable_shared_from_this<Execution> {

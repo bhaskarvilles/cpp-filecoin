@@ -36,6 +36,7 @@
 #include "codec/json/json.hpp"
 #include "common/api_secret.hpp"
 #include "common/error_text.hpp"
+#include "common/libp2p/timer_loop.hpp"
 #include "common/peer_key.hpp"
 #include "crypto/bls/impl/bls_provider_impl.hpp"
 #include "crypto/secp256k1/impl/secp256k1_provider_impl.hpp"
@@ -256,25 +257,8 @@ namespace fc::node {
     std::string hex_string(std::istreambuf_iterator<char>{ifs}, {});
     OUTCOME_TRY(blob, common::unhex(hex_string));
     OUTCOME_TRY(json, codec::json::parse(blob));
-    OUTCOME_TRY(key_info, api::decode<KeyInfo>(json));
+    OUTCOME_TRY(key_info, codec::json::decode<KeyInfo>(json));
     return std::move(key_info);
-  }
-
-  /**
-   * Run timer loop
-   * @param scheduler - timer scheduler
-   * @param tick - timer tick
-   * @param cb - callback to call
-   */
-  void timerLoop(const std::shared_ptr<Scheduler> &scheduler,
-                 const std::chrono::milliseconds &tick,
-                 const std::function<void()> &cb) {
-    scheduler->schedule(
-        [scheduler, tick, cb]() {
-          cb();
-          timerLoop(scheduler, tick, cb);
-        },
-        tick);
   }
 
   /**
@@ -291,8 +275,8 @@ namespace fc::node {
     // Republish pending messages
     // Delay from lotus
     // https://github.com/filecoin-project/lotus/blob/d9100981ada8b3186d906a4f4140b83a819d2299/chain/messagepool/messagepool.go#L58
-    const auto republishTimeout{std::chrono::seconds(10 * kEpochDurationSeconds
-                                                     + kPropagationDelaySecs)};
+    const auto republishTimeout{
+        std::chrono::seconds(10 * kBlockDelaySecs + kPropagationDelaySecs)};
     timerLoop(o.scheduler, republishTimeout, [mpool{o.mpool}] {
       const auto res = mpool->republishPendingMessages();
       if (!res) {
@@ -364,7 +348,6 @@ namespace fc::node {
         storage::LevelDB::create(config.join("ipld_leveldb")).value();
     o.ipld_leveldb =
         std::make_shared<storage::ipfs::LeveldbDatastore>(o.ipld_leveldb_kv);
-    o.ipld = o.ipld_leveldb;
     o.ipld = *storage::cids_index::loadOrCreateWithProgress(
         config.genesisCar(), false, boost::none, o.ipld, log());
     auto snapshot_cids{loadSnapshot(config, o)};
@@ -379,7 +362,7 @@ namespace fc::node {
     // estimated, 80gb
     o.compacter->compact_on_car = uint64_t{80} << 30;
     o.compacter->epochs_full_state = 30;
-    o.compacter->epochs_lookback_state = 2000;
+    o.compacter->epochs_lookback_state = 2400;
     o.compacter->epochs_messages = 60;
 
     o.ts_load_ipld = std::make_shared<primitives::tipset::TsLoadIpld>(o.ipld);
@@ -407,7 +390,7 @@ namespace fc::node {
     const auto drand_schedule{std::make_shared<drand::DrandScheduleImpl>(
         drand_chain_info,
         genesis_timestamp,
-        std::chrono::seconds(kEpochDurationSeconds))};
+        std::chrono::seconds(kBlockDelaySecs))};
 
     o.env_context.ts_branches_mutex = ts_mutex;
     o.env_context.ipld = o.ipld;

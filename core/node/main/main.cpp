@@ -122,22 +122,51 @@ namespace fc {
             deal.proposal_cid,
             deal.state,
             deal.message,
-            deal.client_deal_proposal.proposal.provider,
+            deal.client_deal_proposal.proposal->provider,
             deal.data_ref,
-            deal.client_deal_proposal.proposal.piece_cid,
-            deal.client_deal_proposal.proposal.piece_size.unpadded(),
-            deal.client_deal_proposal.proposal.storage_price_per_epoch,
-            deal.client_deal_proposal.proposal.duration(),
+            deal.client_deal_proposal.proposal->piece_cid,
+            deal.client_deal_proposal.proposal->piece_size.unpadded(),
+            deal.client_deal_proposal.proposal->storage_price_per_epoch,
+            deal.client_deal_proposal.proposal->duration(),
             deal.deal_id,
             // TODO (a.chernyshov) creation time - actually not used
             {},
-            deal.client_deal_proposal.proposal.verified,
+            deal.client_deal_proposal.proposal->verified,
             // TODO (a.chernyshov) actual ChannelId
             {node_objects.host->getId(), deal.miner.id, 0},
             // TODO (a.chernyshov) actual data transfer
             {0, 0, deal.proposal_cid, true, true, "", "", deal.miner.id, 0}});
       }
       return result;
+    };
+
+    node_objects.api->ClientGetDealInfo =
+        [&node_objects](auto &cid) -> outcome::result<StorageMarketDealInfo> {
+      OUTCOME_TRY(deal, node_objects.storage_market_client->getLocalDeal(cid));
+      return StorageMarketDealInfo{
+          .proposal_cid = deal.proposal_cid,
+          .state = deal.state,
+          .message = deal.message,
+          .provider = deal.client_deal_proposal.proposal->provider,
+          .data_ref = deal.data_ref,
+          .piece_cid = deal.client_deal_proposal.proposal->piece_cid,
+          .size = deal.client_deal_proposal.proposal->piece_size.unpadded(),
+          .price_per_epoch =
+              deal.client_deal_proposal.proposal->storage_price_per_epoch,
+          .duration = deal.client_deal_proposal.proposal->duration(),
+          .deal_id = deal.deal_id,
+          // TODO(@Elestrias): [FIL-614] Creation time
+          .creation_time = {},
+          .verified = deal.client_deal_proposal.proposal->verified,
+          .transfer_channel_id = {node_objects.host->getId(), deal.miner.id, 0},
+          .data_transfer =
+              {0, 0, deal.proposal_cid, true, true, "", "", deal.miner.id, 0},
+      };
+    };
+
+    node_objects.api->ClientListRetrievals =
+        [&node_objects]() -> outcome::result<std::vector<api::RetrievalDeal>> {
+      return node_objects.retrieval_market_client->getRetrievals();
     };
 
     node_objects.api->ClientStartDeal =
@@ -301,7 +330,6 @@ namespace fc {
           } else {
             log()->warn("drand config {}: {:#}", host, _info.error());
           }
-          exit(EXIT_FAILURE);
         });
       }
     });

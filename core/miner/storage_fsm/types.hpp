@@ -11,8 +11,9 @@
 #include "primitives/tipset/tipset_key.hpp"
 #include "primitives/types.hpp"
 #include "sector_storage/manager.hpp"
-#include "vm/actor/builtin/types/market/deal.hpp"
+#include "vm/actor/builtin/types/market/deal_proposal.hpp"
 #include "vm/actor/builtin/types/miner/sector_info.hpp"
+#include "vm/actor/builtin/types/universal/universal.hpp"
 
 namespace fc::mining::types {
   using primitives::ChainEpoch;
@@ -28,6 +29,7 @@ namespace fc::mining::types {
   using sector_storage::InteractiveRandomness;
   using sector_storage::PreCommit1Output;
   using sector_storage::Range;
+  using vm::actor::builtin::types::Universal;
   using vm::actor::builtin::types::market::DealProposal;
   using vm::actor::builtin::types::miner::SectorPreCommitInfo;
 
@@ -52,7 +54,7 @@ namespace fc::mining::types {
   struct DealInfo {
     boost::optional<CID> publish_cid;
     DealId deal_id;
-    boost::optional<DealProposal> deal_proposal;
+    boost::optional<Universal<DealProposal>> deal_proposal;
     DealSchedule deal_schedule;
     bool is_keep_unsealed;
   };
@@ -105,10 +107,11 @@ namespace fc::mining::types {
 
     boost::optional<CID> fault_report_message;
 
+    // Snap deals and CCUpdate
     bool update{false};
     std::vector<Piece> update_pieces;
-    boost::optional<CID> update_comm_d;
-    boost::optional<CID> update_comm_r;
+    boost::optional<CID> update_unsealed;
+    boost::optional<CID> update_sealed;
     boost::optional<Bytes> update_proof;
     boost::optional<CID> update_message;
 
@@ -226,6 +229,7 @@ namespace fc::mining::types {
 
   struct FeeConfig {
     TokenAmount max_precommit_gas_fee;
+    TokenAmount max_commit_gas_fee;
 
     // maxBatchFee = maxBase + maxPerSector * nSectors
     BatchConfing max_precommit_batch_gas_fee;

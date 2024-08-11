@@ -37,8 +37,7 @@ target_link_libraries(store
         CURL::libcurl
         file
         logger
-        rpc
+        json
         sector_index
         tarutil
-        p2p::asio_scheduler
         )

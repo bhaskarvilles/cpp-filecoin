@@ -55,9 +55,9 @@
 #include "storage/ipfs/impl/datastore_leveldb.hpp"
 #include "storage/leveldb/leveldb.hpp"
 #include "storage/piece/impl/piece_storage_impl.hpp"
+#include "vm/actor/builtin/methods/miner.hpp"
+#include "vm/actor/builtin/methods/storage_power.hpp"
 #include "vm/actor/builtin/types/market/deal_info_manager/impl/deal_info_manager_impl.hpp"
-#include "vm/actor/builtin/v0/miner/miner_actor.hpp"
-#include "vm/actor/builtin/v0/storage_power/storage_power_actor.hpp"
 
 namespace fc {
   using boost::asio::io_context;
@@ -72,11 +72,14 @@ namespace fc {
   using primitives::StoredCounter;
   using primitives::address::Address;
   using primitives::jwt::kAllPermission;
+  using primitives::sector::getRegisteredWindowPoStProof;
   using primitives::sector::RegisteredSealProof;
   using storage::BufferMap;
   using vm::actor::builtin::types::market::deal_info_manager::
       DealInfoManagerImpl;
   namespace uuids = boost::uuids;
+  namespace miner_actor = vm::actor::builtin::miner;
+  namespace power = vm::actor::builtin::power;
 
   static const Bytes kActor{copy(cbytes("actor"))};
   static const std::string kSectorCounterKey = "sector_counter";
@@ -90,7 +93,7 @@ namespace fc {
   struct Config {
     boost::filesystem::path repo_path;
     std::pair<Multiaddress, std::string> node_api{
-        codec::cbor::kDefaultT<Multiaddress>(), {}};
+        common::kDefaultT<Multiaddress>(), {}};
     boost::optional<Address> actor, owner, worker;
     boost::optional<RegisteredSealProof> seal_type;
     std::vector<Address> precommit_control;
@@ -113,8 +116,9 @@ namespace fc {
       const std::shared_ptr<storage::PersistentBufferMap> &ds) {
     OUTCOME_TRY(file, common::readFile(path));
     OUTCOME_TRY(j_file, codec::json::parse(gsl::make_span(file)));
-    OUTCOME_TRY(
-        psm, api::decode<std::map<std::string, miner::types::Miner>>(j_file));
+    OUTCOME_TRY(psm,
+                codec::json::decode<std::map<std::string, miner::types::Miner>>(
+                    j_file));
 
     const auto it_psm = psm.find(encodeToString(maddr));
     if (it_psm == psm.end()) {
@@ -251,12 +255,13 @@ namespace fc {
         if (!config.worker) {
           config.worker = config.owner;
         }
-        using vm::actor::builtin::v0::storage_power::CreateMiner;
+        OUTCOME_TRY(window_post_proof_type,
+                    getRegisteredWindowPoStProof(*config.seal_type));
         OUTCOME_TRY(params,
-                    codec::cbor::encode(CreateMiner::Params{
+                    codec::cbor::encode(power::CreateMiner::Params{
                         *config.owner,
                         *config.worker,
-                        *config.seal_type,
+                        window_post_proof_type,
                         _peer_id,
                         {},
                     }));
@@ -267,7 +272,7 @@ namespace fc {
                                           {},
                                           {},
                                           {},
-                                          CreateMiner::Number,
+                                          power::CreateMiner::Number,
                                           params},
                                          api::kPushNoSpec));
         spdlog::info(
@@ -283,7 +288,7 @@ namespace fc {
           exit(EXIT_FAILURE);
         }
         OUTCOME_TRY(created,
-                    codec::cbor::decode<CreateMiner::Result>(
+                    codec::cbor::decode<power::CreateMiner::Result>(
                         result.receipt.return_value));
         config.actor = created.id_address;
         spdlog::info("created miner actor {}", *config.actor);
@@ -297,8 +302,9 @@ namespace fc {
     config.owner = minfo.owner;
     config.worker = minfo.worker;
     if (minfo.peer_id.empty() || minfo.peer_id != _peer_id) {
-      using vm::actor::builtin::v0::miner::ChangePeerId;
-      OUTCOME_TRY(params, codec::cbor::encode(ChangePeerId::Params{_peer_id}));
+      OUTCOME_TRY(
+          params,
+          codec::cbor::encode(miner_actor::ChangePeerId::Params{_peer_id}));
       OUTCOME_TRY(smsg,
                   api.MpoolPushMessage({*config.actor,
                                         minfo.worker,
@@ -306,7 +312,7 @@ namespace fc {
                                         {},
                                         {},
                                         {},
-                                        ChangePeerId::Number,
+                                        miner_actor::ChangePeerId::Number,
                                         params},
                                        api::kPushNoSpec));
       spdlog::info(
@@ -331,13 +337,8 @@ namespace fc {
           true);
     }
 
-    OUTCOME_TRY(
-        params,
-        proofs::ProofParamProvider::readJson(config.join("proof-params.json")));
-    OUTCOME_TRY(
-        proofs::ProofParamProvider::getParams(params, minfo.sector_size));
-
-    return outcome::success();
+    return proofs::getParams(config.join("proof-params.json"),
+                             minfo.sector_size);
   }
 
   // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -428,9 +429,11 @@ namespace fc {
         local_store, std::move(auth_headers))};
 
     IoThread io_thread2;
+    // TODO(ortoymka): Use scheduler with estimator, when it will done
     OUTCOME_TRY(wscheduler,
                 sector_storage::SchedulerImpl::newScheduler(
                     io_thread2.io, prefixed("scheduler_works/")));
+
     IoThread io_thread3;
 
     {

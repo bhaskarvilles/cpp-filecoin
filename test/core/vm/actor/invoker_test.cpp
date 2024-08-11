@@ -28,8 +28,7 @@ namespace fc::vm::actor {
     auto ts{std::make_shared<primitives::tipset::Tipset>()};
     ts->blks.emplace_back();
     auto execution{std::make_shared<Execution>()};
-    execution->env =
-        std::make_shared<Env>(runtime::EnvironmentContext{}, nullptr, ts);
+    execution->env = std::make_shared<Env>();
 
     InvokerImpl invoker;
 

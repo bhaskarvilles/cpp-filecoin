@@ -44,18 +44,10 @@ namespace fc::proofs {
   class ProofsTest : public test::BaseFS_Test {
    public:
     ProofsTest() : test::BaseFS_Test("fc_proofs_test") {
-      auto res = ProofParamProvider::readJson(
-          "/var/tmp/filecoin-proof-parameters/parameters.json");
-      if (!res.has_error()) {
-        params_ = std::move(res.value());
-      }
-
       proofs_ = std::make_shared<ProofEngineImpl>();
     }
 
    protected:
-    std::vector<ParamFile> params_;
-
     std::shared_ptr<ProofEngine> proofs_;
   };
 
@@ -74,7 +66,8 @@ namespace fc::proofs {
     SectorNumber sector_num = 42;
     EXPECT_OUTCOME_TRUE(sector_size,
                         primitives::sector::getSectorSize(seal_proof_type));
-    EXPECT_OUTCOME_TRUE_1(ProofParamProvider::getParams(params_, sector_size));
+    EXPECT_OUTCOME_TRUE_1(getParams(
+        "/var/tmp/filecoin-proof-parameters/parameters.json", sector_size));
 
     Ticket ticket{{5, 4, 2}};
 

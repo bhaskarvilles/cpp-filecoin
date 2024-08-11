@@ -39,7 +39,7 @@ namespace fc::primitives {
   struct FsStat {
     uint64_t capacity = 0;
     uint64_t available = 0;
-    uint64_t fs_available = 0; // Available to use for sector storage
+    uint64_t fs_available = 0;  // Available to use for sector storage
     uint64_t reserved = 0;
     uint64_t max = 0;
     uint64_t used = 0;
@@ -96,21 +96,13 @@ namespace fc::primitives {
     WorkerResources resources;
   };
 
-  struct WorkerStats {
-    WorkerInfo info;
-
-    uint64_t min_used_memory = 0;
-    uint64_t max_used_memory = 0;
-
-    bool is_gpu_used = false;
-    uint64_t cpu_use = 0;
-  };
-
   using StoragePower = BigInt;
 
   using SpaceTime = BigInt;
 
   using SectorQuality = BigInt;
+
+  using DataCap = StoragePower;
 
   CBOR_TUPLE(SectorStorageWeightDesc, sector_size, duration, deal_weight)
 }  // namespace fc::primitives

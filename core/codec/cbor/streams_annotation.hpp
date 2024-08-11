@@ -145,9 +145,10 @@
                 _CBOR_TUPLE_1)  \
   (op, __VA_ARGS__)
 
-#define CBOR_ENCODE_TUPLE(T, ...)                        \
-  CBOR_ENCODE(T, t) {                                    \
-    return s << (s.list() _CBOR_TUPLE(<<, __VA_ARGS__)); \
+#define CBOR_ENCODE_TUPLE(T, ...)                 \
+  CBOR_ENCODE(T, t) {                             \
+    auto l{s.list()};                             \
+    return s << (l _CBOR_TUPLE(<<, __VA_ARGS__)); \
   }
 
 #define CBOR_TUPLE(T, ...)          \
@@ -177,17 +178,6 @@
   }
 
 namespace fc::codec::cbor {
-  /**
-   * Default value for CBORed value instantiation
-   * In case of non default constructible type instantiate default value with
-   * any constant
-   * @tparam T - constructible type
-   */
-  template <typename T>
-  inline T kDefaultT() {
-    return {};
-  }
-
   class CborDecodeStream;
   class CborEncodeStream;
 }  // namespace fc::codec::cbor

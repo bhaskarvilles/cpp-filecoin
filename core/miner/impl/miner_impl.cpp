@@ -87,13 +87,14 @@ namespace fc::miner {
             api,
             2 * kWPoStProvingPeriod,
             std::chrono::seconds(kMaxSectorExpirationExtension
-                                 * kEpochDurationSeconds));
+                                 * kBlockDelaySecs));
     std::shared_ptr<FeeConfig> fee_config = std::make_shared<FeeConfig>();
     fee_config->max_precommit_batch_gas_fee.base = {
         0};  // TODO(ortyomka): config loading;
     fee_config->max_precommit_batch_gas_fee.per_sector =
         TokenAmount{"2000000000000000"};
     fee_config->max_precommit_gas_fee = TokenAmount{"25000000000000000"};
+    fee_config->max_commit_gas_fee = TokenAmount{"50000000000000000"};
 
     std::shared_ptr<PreCommitBatcher> precommit_batcher =
         std::make_shared<PreCommitBatcherImpl>(std::chrono::seconds(60),

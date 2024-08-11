@@ -12,9 +12,9 @@
 #include "vm/actor/builtin/types/universal/universal.hpp"
 
 namespace fc::vm::actor::builtin::states {
+  using primitives::DataCap;
   using primitives::StoragePower;
   using primitives::address::Address;
-  using DataCap = primitives::StoragePower;
 
   struct VerifiedRegistryActorState {
     virtual ~VerifiedRegistryActorState() = default;
@@ -25,14 +25,26 @@ namespace fc::vm::actor::builtin::states {
 
     /**
      * @param address must be an id address
-     * @return data cap for the given address
+     * @return data cap of the client for the given address
      */
-    outcome::result<boost::optional<DataCap>> getVerifiedClientDataCap(
+    inline outcome::result<boost::optional<DataCap>> getVerifiedClientDataCap(
         const Address &address) const {
       if (!address.isId()) {
         return ERROR_TEXT("Can only look up ID addresses");
       }
       return verified_clients.tryGet(address);
+    }
+
+    /**
+     * @param address must be an id address
+     * @return data cap of the verifier for the given address
+     */
+    inline outcome::result<boost::optional<DataCap>> getVerifierDataCap(
+        const Address &address) const {
+      if (!address.isId()) {
+        return ERROR_TEXT("Can only look up ID addresses");
+      }
+      return verifiers.tryGet(address);
     }
   };
 

@@ -81,7 +81,7 @@ namespace fc::vm::actor::cgo {
     runtimes_lock.unlock();
     const auto &message{runtime->getMessage().get()};
     auto version{runtime->getNetworkVersion()};
-    const auto &base_fee{runtime->execution()->env->tipset->getParentBaseFee()};
+    const auto &base_fee{runtime->execution()->env->base_fee};
     arg << id << version << base_fee << message.from << message.to
         << runtime->getCurrentEpoch() << message.value << code << message.method
         << message.params;
@@ -290,8 +290,8 @@ namespace fc::vm::actor::cgo {
     auto _fault{rt->verifyConsensusFault(block1, block2, extra)};
     // TODO(turuslan): correct error handling
     if (!charge(ret, _fault)) {
-      auto &fault{_fault.value()};
-      if (fault) {
+      if (_fault && _fault.value()) {
+        const auto &fault{_fault.value()};
         ret << kOk << true << fault->target << fault->epoch << fault->type;
       } else {
         ret << kOk << false;
